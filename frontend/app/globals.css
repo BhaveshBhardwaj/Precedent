@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+:root {
+  --color-accent: #a855f7;
+  --color-accent-glow: rgba(168, 85, 247, 0.3);
+  --color-danger: #ef4444;
+  --color-danger-glow: rgba(239, 68, 68, 0.3);
+  --color-success: #22c55e;
+  --color-success-glow: rgba(34, 197, 94, 0.3);
+  --color-warning: #f59e0b;
+  --color-warning-glow: rgba(245, 158, 11, 0.3);
+}
+
+/* Custom glassmorphism utilities */
+.glass {
+  background: rgba(24, 24, 27, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-strong {
+  background: rgba(24, 24, 27, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Glow effects */
+.glow-accent {
+  box-shadow: 0 0 20px var(--color-accent-glow), 0 0 60px var(--color-accent-glow);
+}
+
+.glow-danger {
+  box-shadow: 0 0 20px var(--color-danger-glow), 0 0 60px var(--color-danger-glow);
+}
+
+.glow-success {
+  box-shadow: 0 0 20px var(--color-success-glow), 0 0 60px var(--color-success-glow);
+}
+
+/* Animations */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-out-down {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes confetti-pop {
+  0% { transform: scale(0) rotate(0deg); opacity: 0; }
+  50% { transform: scale(1.2) rotate(180deg); opacity: 1; }
+  100% { transform: scale(1) rotate(360deg); opacity: 1; }
+}
+
+.animate-shake {
+  animation: shake 0.6s ease-in-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.animate-fade-out-down {
+  animation: fade-out-down 0.4s ease-in forwards;
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}
+
+.animate-confetti {
+  animation: confetti-pop 0.6s ease-out forwards;
+}
+
+/* Category chip colors - REMOVED (no longer used in Precedent) */
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
