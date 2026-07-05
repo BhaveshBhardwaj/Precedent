@@ -1,0 +1,5 @@
+cognee
+fastapi[standard]
+uvicorn[standard]
+aiosqlite
+python-dotenv
