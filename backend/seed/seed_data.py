@@ -228,82 +228,189 @@ def generate_seed_patterns():
     ]
 
 
+async def dedupe_sqlite_seed_data(get_db) -> tuple[int, int]:
+    """Remove duplicate seed rows while keeping one copy of each distinct item."""
+    deleted_incidents = 0
+    deleted_patterns = 0
+
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT user_id, service, symptom, alert, COALESCE(root_cause_and_fix, '') AS root_cause_and_fix
+            FROM incidents
+            GROUP BY user_id, service, symptom, alert, COALESCE(root_cause_and_fix, '')
+            HAVING COUNT(*) > 1
+            """
+        )
+        duplicate_incident_groups = await cursor.fetchall()
+
+        for group in duplicate_incident_groups:
+            cursor = await db.execute(
+                """
+                SELECT id FROM incidents
+                WHERE user_id = ? AND service = ? AND symptom = ? AND alert = ?
+                  AND COALESCE(root_cause_and_fix, '') = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (
+                    group["user_id"],
+                    group["service"],
+                    group["symptom"],
+                    group["alert"],
+                    group["root_cause_and_fix"],
+                ),
+            )
+            rows = await cursor.fetchall()
+            ids_to_delete = [row["id"] for row in rows[1:]]
+            for incident_id in ids_to_delete:
+                await db.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+            deleted_incidents += len(ids_to_delete)
+
+        cursor = await db.execute(
+            """
+            SELECT user_id, service, status
+            FROM patterns
+            GROUP BY user_id, service, status
+            HAVING COUNT(*) > 1
+            """
+        )
+        duplicate_pattern_groups = await cursor.fetchall()
+
+        for group in duplicate_pattern_groups:
+            cursor = await db.execute(
+                """
+                SELECT id, incident_count, streak_started_at, decommissioned_at
+                FROM patterns
+                WHERE user_id = ? AND service = ? AND status = ?
+                ORDER BY incident_count DESC, COALESCE(streak_started_at, '') ASC, id DESC
+                """,
+                (group["user_id"], group["service"], group["status"]),
+            )
+            rows = await cursor.fetchall()
+            if not rows:
+                continue
+
+            keep = rows[0]
+            ids_to_delete = [row["id"] for row in rows[1:]]
+            await db.execute(
+                """
+                UPDATE patterns
+                SET incident_count = ?,
+                    streak_started_at = COALESCE(streak_started_at, ?),
+                    decommissioned_at = COALESCE(decommissioned_at, ?)
+                WHERE id = ?
+                """,
+                (
+                    keep["incident_count"],
+                    keep["streak_started_at"],
+                    keep["decommissioned_at"],
+                    keep["id"],
+                ),
+            )
+            for pattern_id in ids_to_delete:
+                await db.execute("DELETE FROM patterns WHERE id = ?", (pattern_id,))
+            deleted_patterns += len(ids_to_delete)
+
+        await db.commit()
+    finally:
+        await db.close()
+
+    return deleted_incidents, deleted_patterns
+
+
 async def seed():
-    """Run the full seed process."""
-    print("Precedent Seed Script")
+    """Run the seed process without deleting existing data or exhausting LLM rate limits."""
+    print("Precedent Safe Seed Script")
     print("=" * 50)
 
-    # Initialize SQLite
-    from app.db.sqlite import init_db, create_incident_with_timestamp, create_pattern
+    from app.db.sqlite import init_db, create_incident_with_timestamp, create_pattern, get_db
     await init_db()
     print("SQLite initialized")
 
-    # Initialize Cognee
-    from app.cognee_client import init_cognee, reset_cognee, store_incident, store_root_cause
+    from app.cognee_client import init_cognee
     await init_cognee()
     print("Cognee initialized")
 
-    # Reset Cognee for clean demo
-    print("\nResetting Cognee for clean demo...")
-    await reset_cognee()
-    print("Cognee reset complete")
-
-    # Generate and insert incidents
     incidents = generate_seed_incidents()
     patterns = generate_seed_patterns()
 
-    print(f"\nSeeding {len(incidents)} incidents across {len(patterns)} services...")
+    print(f"\nEnsuring {len(incidents)} demo incidents across {len(patterns)} services...")
 
-    for i, incident in enumerate(incidents):
-        # Save to SQLite
-        await create_incident_with_timestamp(**incident)
+    inserted_incidents = 0
+    skipped_incidents = 0
 
-        # Store in Cognee
-        print(f"  [{i+1}/{len(incidents)}] {incident['service']}: {incident['alert'][:50]}...")
+    for incident in incidents:
+        db = await get_db()
         try:
-            await store_incident(
-                symptom=incident["symptom"],
-                alert=incident["alert"],
-                service=incident["service"],
-                created_at=incident["created_at"],
-                severity=incident.get("severity"),
+            cursor = await db.execute(
+                """
+                SELECT id FROM incidents
+                WHERE user_id = ? AND service = ? AND symptom = ? AND alert = ?
+                LIMIT 1
+                """,
+                (
+                    incident.get("user_id", "demo_user"),
+                    incident["service"],
+                    incident["symptom"],
+                    incident["alert"],
+                ),
             )
-        except Exception as e:
-            print(f"    Cognee store failed (continuing): {e}")
+            exists = await cursor.fetchone()
+        finally:
+            await db.close()
 
-        # Store outcome if present
-        if incident.get("root_cause_and_fix"):
-            try:
-                await store_root_cause(
-                    symptom=incident["symptom"],
-                    alert=incident["alert"],
-                    service=incident["service"],
-                    created_at=incident["created_at"],
-                    root_cause_and_fix=incident["root_cause_and_fix"],
-                )
-            except Exception as e:
-                print(f"    Cognee outcome store failed (continuing): {e}")
+        if exists:
+            skipped_incidents += 1
+            continue
 
-        # Sleep to prevent Groq API rate limits (6000 TPM limit)
-        await asyncio.sleep(15)
+        await create_incident_with_timestamp(**incident)
+        inserted_incidents += 1
 
-    print(f"\n{len(incidents)} incidents seeded to SQLite + Cognee")
+    print(f"SQLite incidents: {inserted_incidents} inserted, {skipped_incidents} already present")
 
-    # Create pattern records in SQLite
-    print(f"\nCreating {len(patterns)} service pattern records...")
+    print(f"\nEnsuring {len(patterns)} service pattern records...")
+    inserted_patterns = 0
+    skipped_patterns = 0
     for pattern in patterns:
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT id, incident_count FROM patterns
+                WHERE user_id = ? AND service = ? AND status = ?
+                LIMIT 1
+                """,
+                (pattern.get("user_id", "demo_user"), pattern["service"], pattern["status"]),
+            )
+            existing_pattern = await cursor.fetchone()
+            if existing_pattern:
+                await db.execute(
+                    "UPDATE patterns SET incident_count = MAX(incident_count, ?) WHERE id = ?",
+                    (pattern["incident_count"], existing_pattern["id"]),
+                )
+                await db.commit()
+                skipped_patterns += 1
+                continue
+        finally:
+            await db.close()
+
         await create_pattern(**pattern)
+        inserted_patterns += 1
 
-    print(f"{len(patterns)} service patterns created")
+    print(f"SQLite patterns: {inserted_patterns} inserted, {skipped_patterns} already present")
 
-    # Run improve() to reinforce the seeded patterns
-    print("\nRunning Cognee improve() to reinforce patterns...")
+    deleted_incidents, deleted_patterns = await dedupe_sqlite_seed_data(get_db)
+    print(f"SQLite duplicates removed: {deleted_incidents} incidents, {deleted_patterns} patterns")
+
+    print("\nBuilding Cognee graph from local seed data (no LLM/Groq calls)...")
     try:
-        from app.cognee_client import reinforce_patterns
-        await reinforce_patterns()
-        print("Pattern reinforcement complete")
+        from seed.local_graph_builder import main as build_local_graph
+
+        await build_local_graph()
+        print("Cognee graph build complete")
     except Exception as e:
-        print(f"improve() failed (non-critical): {e}")
+        print(f"Cognee local graph build failed (backend SQLite fallback remains usable): {e}")
 
     print("\n" + "=" * 50)
     print("Seed complete! Ready for demo.")

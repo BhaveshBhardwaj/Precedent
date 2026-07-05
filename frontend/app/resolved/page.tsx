@@ -23,9 +23,14 @@ export default function ResolvedPage() {
 
   useEffect(() => {
     fetchPatterns();
+    const intervalId = window.setInterval(() => {
+      fetchPatterns(true);
+    }, 2500);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
-  async function fetchPatterns() {
+  async function fetchPatterns(silent = false) {
     try {
       const [resolvedRes, activeRes] = await Promise.all([
         fetch(`${API_URL}/services?status=decommissioned`),
@@ -37,7 +42,7 @@ export default function ResolvedPage() {
     } catch (e) {
       console.error("Failed to fetch patterns:", e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

@@ -5,7 +5,7 @@ When a service gets decommissioned, you forget() everything tied to it —
 a real, defensible reason to prune a graph.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from app.db.models import IncidentPatternResponse
 from app.db import sqlite
 from app.cognee_client import decommission_and_forget
@@ -14,7 +14,7 @@ router = APIRouter(tags=["services"])
 
 
 @router.post("/services/{pattern_id}/decommission", response_model=IncidentPatternResponse)
-async def decommission_service(pattern_id: str):
+async def decommission_service(pattern_id: str, background_tasks: BackgroundTasks):
     """Decommission a service — the user has earned the right to forget.
 
     1. Marks the pattern as 'decommissioned' in SQLite
@@ -29,14 +29,14 @@ async def decommission_service(pattern_id: str):
         raise HTTPException(status_code=400, detail="Service already decommissioned")
 
     # Call Cognee forget() — even if this fails, the SQLite update drives the UI
-    await decommission_and_forget(
+    result = await sqlite.decommission_service(pattern_id)
+
+    background_tasks.add_task(
+        decommission_and_forget,
         user_id=pattern["user_id"],
         service=pattern["service"],
         pattern_id=pattern_id,
     )
-
-    # Update SQLite status
-    result = await sqlite.decommission_service(pattern_id)
 
     return IncidentPatternResponse(**result)
 

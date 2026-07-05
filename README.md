@@ -1,119 +1,170 @@
-# 🛡️ Precedent — Institutional Memory for On-Call Engineers
+# Precedent
 
-> Precedent is an institutional memory graph for on-call engineers. It catches you repeating the same architectural debugging loops — and lets you earn the right to forget them permanently.
+Institutional memory for on-call engineers.
 
-## What it does
+Precedent is a Cognee-powered incident memory graph that catches recurring debugging loops before engineers waste another hour rediscovering the same root cause. Log a symptom and alert, and Precedent checks your team's own incident history for matching service failures, known root causes, and fixes.
 
-When a 3 AM incident hits, you log the symptom and the alert *before* you start debugging. Instead of just saving a ticket, Precedent searches the team's **own history** for the same symptom → alert → root cause loop, and — if it finds one — **interrupts you with the historical root causes** before you waste time reinventing the wheel.
+## Why It Exists
 
-*"You've seen this signature 4 times. Here's what the root cause was each time."*
+On-call teams often solve the same class of incidents repeatedly:
 
-This is not a generic wiki. This is **institutional memory used as a mirror**.
+- the Redis connection pool leaks again
+- the payment retry loop double-charges customers again
+- the auth service falls over because the old token path is still alive
 
-## Why Cognee
+Those lessons usually live in Slack threads, postmortems, ticket comments, or one engineer's memory. Precedent turns those lessons into an active memory system.
 
-Precedent uses every stage of Cognee's memory lifecycle — not as decoration, but because each maps directly to a real DevOps need:
+Instead of being a passive wiki, it interrupts the incident workflow:
 
-| Cognee Feature | Precedent Feature | Why |
-|---|---|---|
-| `remember()` with `node_set` | Store each incident with service scoping | Incidents need semantic structure (Symptoms vs Root Causes) |
-| `recall()` with `GRAPH_COMPLETION` | **The Interrupt** — find past similar incidents via graph traversal | Embedding similarity alone misses the symptom→alert→fix *chain* |
-| `improve()` | Pattern reinforcement | The more post-mortems logged, the tighter the graph |
-| `forget()` | **Earned Forgetting** — decommission legacy services | Old alerts shouldn't pollute future context. You *earn* the right to prune the graph when you fix the architecture permanently. |
-| Graph visualization | Live architecture graph | Watch your failure modes cluster and dissolve in real time |
+> This looks familiar. You have seen this service fail this way before. Here are the previous root causes.
 
-The novel beat: **forgetting as a feature you earn, not a bug to prevent.**
+## Core Features
 
-## Quick Start
+- **Precedent interrupt**: checks for similar incidents before saving a new one.
+- **Incident timeline**: shows active service failures and lets engineers close the loop with a root cause.
+- **Earned decommissioning**: moves fixed recurring patterns out of the active timeline.
+- **Live memory graph**: visualizes services, incidents, symptoms, alerts, and root causes.
+- **Clickable graph nodes**: click any node to inspect its description, metadata, and relationships.
+- **Realtime updates**: timeline, resolved services, and graph views refresh automatically.
+- **Safe seed flow**: deterministic demo data seeding that preserves data, removes duplicates, and avoids Groq rate-limit loops.
+
+## Cognee Usage
+
+Cognee is a required part of this project. Precedent uses Cognee as the semantic memory layer and graph-backed incident substrate.
+
+| Cognee capability | Precedent behavior |
+| --- | --- |
+| `remember()` | Stores new incidents, root causes, and decommission markers into memory. |
+| `recall()` / graph completion | Available for graph-based precedent search when enabled. |
+| `improve()` | Supported for memory reinforcement, with safe timeout guards. |
+| `forget()` | Supported behind an explicit opt-in flag to avoid accidental demo data loss. |
+| Graph engine | Seed script builds a Cognee graph from local incident history. |
+
+For realtime demo reliability, the default interrupt and graph endpoints use the active app-state projection while Cognee remains used for storage, seed graph construction, and optional recall.
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
+| Backend | FastAPI, Python, Uvicorn |
+| Memory | Cognee local mode |
+| App state | SQLite |
+| Graph UI | Canvas force-directed graph |
+| Deployment | Vercel frontend + Docker backend |
+
+## Project Structure
+
+```text
+groundhog/
+  backend/
+    app/
+      main.py                 FastAPI app and CORS setup
+      cognee_client.py        Cognee integration and graph projection
+      routes/
+        entries.py            Incident create/list/root-cause routes
+        interrupt.py          Precedent check route
+        resolve.py            Decommission route
+        graph.py              Memory graph route
+      db/
+        sqlite.py             SQLite persistence and active-state filters
+        models.py             Pydantic API schemas
+    seed/
+      seed_data.py            Safe idempotent demo seeding
+      local_graph_builder.py  Cognee graph builder without LLM-heavy extraction
+    Dockerfile                Backend deploy image
+  frontend/
+    app/
+      page.tsx                Incident reporting screen
+      timeline/page.tsx       Active incident timeline
+      resolved/page.tsx       Decommissioned precedent view
+      memory/page.tsx         Memory graph page
+      components/
+        GraphView.tsx         Live clickable graph
+        InterruptModal.tsx    Precedent interrupt modal
+        EntryForm.tsx         Incident form
+        PatternCard.tsx       Service precedent cards
+    vercel.json               Vercel frontend config
+  DEPLOYMENT.md               Deployment instructions
+  PROJECT_REPORT.md           Full project report
+```
+
+## Local Setup
 
 ### Prerequisites
+
 - Python 3.11+
 - Node.js 18+
-- An OpenAI API key (or any Cognee-supported LLM provider)
+- Cognee-compatible LLM configuration
 
 ### Backend
 
-```bash
-cd groundhog/backend
-
-# Create and activate virtual environment
+```powershell
+cd backend
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
-
-# Configure environment
 copy .env.example .env
-# Edit .env and add your LLM_API_KEY
+```
 
-# Seed demo data (optional but recommended for demos)
+Edit `.env` with your provider keys. Do not commit `.env`.
+
+Seed the demo data:
+
+```powershell
 python -m seed.seed_data
+```
 
-# Start the server
-uvicorn app.main:app --reload --port 8000
+Run the API:
+
+```powershell
+$env:PRECEDENT_RECALL_SOURCE="app_state"
+$env:PRECEDENT_GRAPH_SOURCE="app_state"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ### Frontend
 
-```bash
-cd groundhog/frontend
-
-# Install dependencies
+```powershell
+cd frontend
 npm install
-
-# Start dev server
-npm run dev
+$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8000"
+npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
 
-Open http://localhost:3000 — log an incident and watch the interrupt fire.
+Open:
 
-## Architecture
-
-```
-groundhog/
-  backend/
-    app/
-      main.py              # FastAPI app with CORS + lifecycle
-      cognee_client.py     # Cognee v1.0 API wrapper (remember/recall/improve/forget)
-      routes/
-        entries.py          # POST/GET incidents, PATCH root_cause
-        interrupt.py        # POST /check-precedent (the interrupt)
-        resolve.py          # POST /services/{id}/decommission (earned forgetting)
-        graph.py            # GET /graph (live visualization data)
-      db/
-        sqlite.py           # App state: incidents, patterns
-        models.py           # Pydantic schemas
-    seed/
-      seed_data.py          # 15 backdated incidents across 3 microservices
-  frontend/
-    app/
-      page.tsx              # Log screen — "What broke this time?"
-      timeline/page.tsx     # Incident history with post-mortem closing
-      resolved/page.tsx     # Decommissioned Services (trophy room)
-      components/
-        InterruptModal.tsx   # THE demo hook — cinematic pattern interrupt
-        EntryForm.tsx        # Incident logging form
-        PatternCard.tsx      # Precedent display with counts
-        GraphView.tsx        # Force-directed graph visualization
+```text
+http://127.0.0.1:3000
 ```
 
-## Demo Script (90 seconds)
+## Demo Flow
 
-1. **0:00** — Open the app. Type Symptom: "High latency on login", Alert: "auth-service > 5s", Service: "auth-service"
-2. **0:10** — 🚨 **InterruptModal fires**: "You've seen this signature 5 times. Here's what the root cause was each time (e.g. Redis connection leak)." ← *This is the aha moment*
-3. **0:25** — Show the past instances with real root causes. Click "Apply Precedent".
-4. **0:35** — Jump to Timeline, show the incident history.
-5. **0:55** — Jump to Decommissioned Services. Explain how when you *finally* fix the architecture, you decommission the service.
-6. **1:05** — Show the graph shrink in real time ← *forget() in action*
-7. **1:20** — One-liner: "This is institutional memory used as a mirror. And forgetting a bad architecture is a feature you earn."
+1. Open the report screen.
+2. Enter:
+   - Symptom: `High latency on login`
+   - Alert: `auth-service latency > 5s for /login`
+   - Service: `auth-service`
+3. The precedent modal appears with historical root causes.
+4. Click **Apply Precedent** to avoid logging a duplicate investigation.
+5. Go to **Incidents** and decommission a recurring service pattern.
+6. Watch the active timeline and memory graph update automatically.
+7. Click graph nodes to inspect descriptions and relationships.
 
-## Tech Stack
+## Deployment
 
-- **Backend**: Python 3.11, FastAPI, Cognee (embedded: SQLite + LanceDB + Kuzu)
-- **Frontend**: Next.js 14 (App Router), TypeScript, TailwindCSS
-- **Memory**: Cognee v1.0 API — the full lifecycle, not just store-and-retrieve
+Recommended deployment split:
+
+- Frontend: Vercel
+- Backend: Render, Railway, Fly.io, or any Docker host with persistent storage
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for exact environment variables and commands.
+
+## Important Safety Notes
+
+- Do not commit `.env`, database files, Cognee system folders, or API keys.
+- The seed script is idempotent and safe to rerun.
+- Destructive Cognee reset/forget behavior is disabled by default and requires explicit environment flags.
 
 ## License
 

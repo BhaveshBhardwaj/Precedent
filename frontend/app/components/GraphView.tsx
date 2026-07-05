@@ -27,36 +27,49 @@ export default function GraphView() {
   const [error, setError] = useState<string | null>(null);
   const animationRef = useRef<number>(0);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchGraph();
+    const intervalId = window.setInterval(() => {
+      fetchGraph(true);
+    }, 2500);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
-  async function fetchGraph() {
+  async function fetchGraph(silent = false) {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await fetch(`${API_URL}/graph`);
       if (!res.ok) throw new Error("Failed to fetch graph");
       const data = await res.json();
 
-      // Initialize node positions randomly
       const width = 800;
       const height = 500;
-      const initializedNodes = (data.nodes || []).map((n: GraphNode) => ({
-        ...n,
-        x: Math.random() * width,
-        y: Math.random() * height,
-        vx: 0,
-        vy: 0,
-      }));
-
-      setNodes(initializedNodes);
+      setNodes((currentNodes) => {
+        const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+        return (data.nodes || []).map((node: GraphNode) => {
+          const existing = currentById.get(node.id);
+          return {
+            ...node,
+            x: existing?.x ?? Math.random() * width,
+            y: existing?.y ?? Math.random() * height,
+            vx: existing?.vx ?? 0,
+            vy: existing?.vy ?? 0,
+          };
+        });
+      });
       setEdges(data.edges || []);
+      setSelectedNodeId((currentId) => {
+        if (!currentId) return currentId;
+        return (data.nodes || []).some((node: GraphNode) => node.id === currentId) ? currentId : null;
+      });
       setError(null);
     } catch (e) {
       setError("Could not load graph. Is the backend running?");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -75,12 +88,18 @@ export default function GraphView() {
     const typeColors: Record<string, string> = {
       entity: "#a855f7",
       Entity: "#a855f7",
+      Symptom: "#a855f7",
+      Alert: "#a855f7",
+      RootCause: "#a855f7",
+      Metric: "#a855f7",
       Person: "#3b82f6",
       Event: "#f59e0b",
       NodeSet: "#22c55e",
+      Service: "#22c55e",
       DocumentChunk: "#6b7280",
       TextSummary: "#8b5cf6",
       Document: "#ec4899",
+      Incident: "#ec4899",
       unknown: "#6b7280",
     };
 
@@ -168,11 +187,12 @@ export default function GraphView() {
       for (const node of nodes) {
         const color = getColor(node.type);
         const isHovered = hoveredNode === node.id;
-        const radius = isHovered ? 8 : 5;
+        const isSelected = selectedNodeId === node.id;
+        const radius = isSelected ? 9 : isHovered ? 8 : 5;
 
         // Glow
         ctx.shadowColor = color;
-        ctx.shadowBlur = isHovered ? 15 : 5;
+        ctx.shadowBlur = isSelected ? 18 : isHovered ? 15 : 5;
 
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -181,8 +201,16 @@ export default function GraphView() {
 
         ctx.shadowBlur = 0;
 
+        if (isSelected) {
+          ctx.strokeStyle = "rgba(255,255,255,0.85)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
         // Label
-        if (isHovered || nodes.length < 30) {
+        if (isHovered || isSelected || nodes.length < 30) {
           ctx.fillStyle = "rgba(255,255,255,0.7)";
           ctx.font = "10px Inter, sans-serif";
           ctx.textAlign = "center";
@@ -200,7 +228,7 @@ export default function GraphView() {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes, edges, hoveredNode]);
+  }, [nodes, edges, hoveredNode, selectedNodeId]);
 
   // Mouse interaction
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -224,6 +252,46 @@ export default function GraphView() {
     setHoveredNode(closest);
   };
 
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+    let closest: string | null = null;
+    let closestDist = 24;
+    for (const node of nodes) {
+      const dx = node.x - x;
+      const dy = node.y - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = node.id;
+      }
+    }
+    setSelectedNodeId(closest);
+  };
+
+  const selectedNode = selectedNodeId
+    ? nodes.find((node) => node.id === selectedNodeId) || null
+    : null;
+
+  const selectedRelationships = selectedNode
+    ? edges
+        .filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id)
+        .slice(0, 6)
+    : [];
+
+  const formatNodeId = (nodeId: string) => {
+    const node = nodes.find((item) => item.id === nodeId);
+    return node?.label || nodeId;
+  };
+
+  const visibleProperties = selectedNode
+    ? Object.entries(selectedNode.properties || {}).filter(([, value]) => value)
+    : [];
+
   if (loading) {
     return (
       <div className="glass rounded-xl p-8 flex items-center justify-center h-[400px]">
@@ -243,7 +311,7 @@ export default function GraphView() {
       <div className="glass rounded-xl p-8 flex flex-col items-center justify-center h-[400px] gap-4">
         <p className="text-zinc-400">{error}</p>
         <button
-          onClick={fetchGraph}
+          onClick={() => fetchGraph()}
           className="px-4 py-2 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30 transition-all"
         >
           Retry
@@ -260,7 +328,7 @@ export default function GraphView() {
           <p className="text-xs text-zinc-500">{nodes.length} nodes · {edges.length} edges</p>
         </div>
         <button
-          onClick={fetchGraph}
+          onClick={() => fetchGraph()}
           className="text-xs px-3 py-1 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-all"
         >
           Refresh
@@ -273,7 +341,67 @@ export default function GraphView() {
         className="w-full h-auto cursor-crosshair"
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHoveredNode(null)}
+        onClick={handleCanvasClick}
       />
+      {selectedNode && (
+        <div className="border-t border-zinc-700/50 px-4 py-4 bg-zinc-950/55">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-900 text-zinc-400">
+                  {selectedNode.type || "unknown"}
+                </span>
+                {selectedNode.properties?.kind && (
+                  <span className="text-xs text-zinc-500">{selectedNode.properties.kind}</span>
+                )}
+              </div>
+              <h4 className="text-sm font-semibold text-zinc-100 break-words">
+                {selectedNode.label}
+              </h4>
+              {selectedNode.properties?.description && (
+                <p className="mt-2 text-sm leading-relaxed text-zinc-400 break-words">
+                  {selectedNode.properties.description}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setSelectedNodeId(null)}
+              className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200"
+            >
+              Close
+            </button>
+          </div>
+
+          {visibleProperties.length > 0 && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {visibleProperties
+                .filter(([key]) => key !== "description")
+                .slice(0, 6)
+                .map(([key, value]) => (
+                  <div key={key} className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-zinc-600">{key.replaceAll("_", " ")}</p>
+                    <p className="text-xs text-zinc-300 break-words">{value}</p>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {selectedRelationships.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-2 text-[10px] uppercase tracking-wider text-zinc-600">Relationships</p>
+              <div className="space-y-1.5">
+                {selectedRelationships.map((edge, index) => (
+                  <div key={`${edge.source}-${edge.target}-${edge.relationship}-${index}`} className="text-xs text-zinc-500">
+                    <span className="text-zinc-300">{formatNodeId(edge.source)}</span>
+                    <span className="px-2 text-zinc-600">{edge.relationship}</span>
+                    <span className="text-zinc-300">{formatNodeId(edge.target)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* Legend */}
       <div className="px-4 py-2 border-t border-zinc-700/50 flex flex-wrap gap-3">
         {[

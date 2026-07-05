@@ -125,15 +125,53 @@ async def create_incident_with_timestamp(
         await db.close()
 
 
-async def get_incidents(user_id: str = "demo_user") -> List[dict]:
+async def get_incidents(user_id: str = "demo_user", include_decommissioned: bool = False) -> List[dict]:
     """Get all incidents for a user, newest first."""
+    db = await get_db()
+    try:
+        if include_decommissioned:
+            cursor = await db.execute(
+                """SELECT id, user_id, symptom, alert, service, severity,
+                          created_at, root_cause_and_fix, root_cause_logged_at
+                   FROM incidents WHERE user_id = ? ORDER BY created_at DESC""",
+                (user_id,),
+            )
+        else:
+            cursor = await db.execute(
+                """SELECT i.id, i.user_id, i.symptom, i.alert, i.service, i.severity,
+                          i.created_at, i.root_cause_and_fix, i.root_cause_logged_at
+                   FROM incidents i
+                   WHERE i.user_id = ?
+                     AND EXISTS (
+                        SELECT 1 FROM patterns p
+                        WHERE p.user_id = i.user_id
+                          AND p.service = i.service
+                          AND p.status = 'active'
+                     )
+                   ORDER BY i.created_at DESC""",
+                (user_id,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_incidents_for_services(user_id: str = "demo_user", services: Optional[List[str]] = None) -> List[dict]:
+    """Get incidents scoped to the provided services."""
+    if not services:
+        return []
+
+    placeholders = ",".join("?" for _ in services)
     db = await get_db()
     try:
         cursor = await db.execute(
             """SELECT id, user_id, symptom, alert, service, severity,
                       created_at, root_cause_and_fix, root_cause_logged_at
-               FROM incidents WHERE user_id = ? ORDER BY created_at DESC""",
-            (user_id,),
+               FROM incidents
+               WHERE user_id = ? AND service IN ({})
+               ORDER BY created_at DESC""".format(placeholders),
+            (user_id, *services),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -257,9 +295,43 @@ async def decommission_service(pattern_id: str) -> Optional[dict]:
     decommissioned_at = datetime.now(timezone.utc).isoformat()
     db = await get_db()
     try:
+        cursor = await db.execute(
+            "SELECT user_id, service, incident_count FROM patterns WHERE id = ?",
+            (pattern_id,),
+        )
+        pattern = await cursor.fetchone()
+        if not pattern:
+            return None
+
+        cursor = await db.execute(
+            """SELECT id, incident_count FROM patterns
+               WHERE user_id = ? AND service = ? AND status = 'decommissioned'
+               ORDER BY incident_count DESC LIMIT 1""",
+            (pattern["user_id"], pattern["service"]),
+        )
+        existing_decommissioned = await cursor.fetchone()
+
+        if existing_decommissioned:
+            await db.execute(
+                """UPDATE patterns
+                   SET incident_count = MAX(incident_count, ?),
+                       decommissioned_at = COALESCE(decommissioned_at, ?)
+                   WHERE id = ?""",
+                (pattern["incident_count"], decommissioned_at, existing_decommissioned["id"]),
+            )
+            await db.execute(
+                """DELETE FROM patterns
+                   WHERE user_id = ? AND service = ? AND status = 'active'""",
+                (pattern["user_id"], pattern["service"]),
+            )
+            await db.commit()
+            return await get_pattern(existing_decommissioned["id"])
+
         await db.execute(
-            "UPDATE patterns SET status = 'decommissioned', decommissioned_at = ? WHERE id = ?",
-            (decommissioned_at, pattern_id),
+            """UPDATE patterns
+               SET status = 'decommissioned', decommissioned_at = ?
+               WHERE user_id = ? AND service = ? AND status = 'active'""",
+            (decommissioned_at, pattern["user_id"], pattern["service"]),
         )
         await db.commit()
         return await get_pattern(pattern_id)

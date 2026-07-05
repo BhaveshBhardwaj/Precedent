@@ -46,9 +46,14 @@ export default function TimelinePage() {
 
   useEffect(() => {
     fetchData();
+    const intervalId = window.setInterval(() => {
+      fetchData(true);
+    }, 2500);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
-  async function fetchData() {
+  async function fetchData(silent = false) {
     try {
       const [incidentsRes, patternsRes] = await Promise.all([
         fetch(`${API_URL}/incidents`),
@@ -60,7 +65,7 @@ export default function TimelinePage() {
     } catch (e) {
       console.error("Failed to fetch data:", e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -70,7 +75,10 @@ export default function TimelinePage() {
         method: "POST",
       });
       if (res.ok) {
-        fetchData(); // Refresh
+        const resolvedPattern = await res.json();
+        setPatterns((current) => current.filter((pattern) => pattern.service !== resolvedPattern.service));
+        setIncidents((current) => current.filter((incident) => incident.service !== resolvedPattern.service));
+        fetchData(true);
       }
     } catch (e) {
       console.error("Failed to resolve pattern:", e);
