@@ -48,7 +48,7 @@ For realtime demo reliability, the default interrupt and graph endpoints use the
 | --- | --- |
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
 | Backend | FastAPI, Python, Uvicorn |
-| Memory | Cognee local mode |
+| Memory | Cognee local mode or Cognee Cloud mode |
 | App state | SQLite |
 | Graph UI | Canvas force-directed graph |
 | Deployment | Vercel frontend + Docker backend |
@@ -108,6 +108,27 @@ copy .env.example .env
 ```
 
 Edit `.env` with your provider keys. Do not commit `.env`.
+
+Choose a Cognee memory mode:
+
+**Local mode** stores Cognee memory on the backend host. Use this for local demos or a Docker backend with persistent disk:
+
+```env
+COGNEE_MODE=local
+DATABASE_URL=sqlite:///./precedent.db
+COGNEE_SKIP_CONNECTION_TEST=true
+```
+
+**Cloud mode** uses a hosted Cognee tenant. Use this when you do not want local graph/vector storage on the backend host:
+
+```env
+COGNEE_MODE=cloud
+COGNEE_API_URL=https://your-cognee-tenant-url
+COGNEE_API_TOKEN=your-cognee-api-token
+DATABASE_URL=sqlite:///./precedent.db
+```
+
+In both modes, keep your LLM and embedding provider variables in `.env` or deployment platform secrets.
 
 Seed the demo data:
 
